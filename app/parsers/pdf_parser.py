@@ -19,9 +19,5 @@ class PdfInvoiceParser(BaseParser):
         reader = pypdf.PdfReader(str(invoice_path))
         extracted_text = "\n".join(page.extract_text() or "" for page in reader.pages)
 
-        temp_path = invoice_path.with_suffix(".txt")
         parser = TextInvoiceParser()
-        invoice = parser.parse(temp_path) if temp_path.exists() else Invoice(raw_text=extracted_text)
-        if not temp_path.exists():
-            invoice.raw_text = extracted_text
-        return invoice
+        return parser.parse_text(extracted_text)

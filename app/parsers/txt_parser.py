@@ -40,7 +40,10 @@ class TextInvoiceParser(BaseParser):
     }
 
     def parse(self, invoice_path: Path) -> Invoice:
-        cleaned_text = self._clean_text(invoice_path.read_text())
+        return self.parse_text(invoice_path.read_text())
+
+    def parse_text(self, text: str) -> Invoice:
+        cleaned_text = self._clean_text(text)
         invoice = Invoice(raw_text=cleaned_text)
 
         for field_name, patterns in self.HEADER_PATTERNS.items():
