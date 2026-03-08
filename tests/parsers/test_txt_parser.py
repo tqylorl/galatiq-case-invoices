@@ -9,6 +9,12 @@ def parse_invoice(invoices_dir: Path, invoice_name: str):
     return TextInvoiceParser().parse(invoices_dir / invoice_name)
 
 
+def write_invoice(tmp_path: Path, text: str) -> Path:
+    invoice_path = tmp_path / "invoice.txt"
+    invoice_path.write_text(text)
+    return invoice_path
+
+
 def test_txt_parser_normalizes_abbreviated_invoice_number(invoices_dir: Path) -> None:
     invoice = parse_invoice(invoices_dir, "invoice_1002.txt")
 
@@ -109,3 +115,68 @@ def test_txt_parser_normalizes_ocr_style_invoice(invoices_dir: Path) -> None:
         "WidgetB",
         "GadgetX",
     ]
+
+
+def test_match_first_returns_none_when_no_pattern_matches() -> None:
+    parser = TextInvoiceParser()
+
+    value = parser._match_first("completely unrelated text", [r"Vendor:\s*(.+)"])
+
+    assert value is None
+
+
+def test_extract_amount_returns_none_when_amount_is_missing() -> None:
+    parser = TextInvoiceParser()
+
+    value = parser._extract_amount("no totals here", [r"Total:\s*\$?([0-9,]+\.\d{2})"])
+
+    assert value is None
+
+
+def test_extract_items_returns_empty_list_when_no_item_lines_exist() -> None:
+    parser = TextInvoiceParser()
+
+    items = parser._extract_items("Vendor: Widgets Inc.\nTotal Amount: $25.00\n")
+
+    assert items == []
+
+
+def test_extract_items_uses_computed_line_total_when_amount_column_missing() -> None:
+    parser = TextInvoiceParser()
+
+    items = parser._extract_items("WidgetA qty: 3 unit price: $250.00")
+
+    assert len(items) == 1
+    assert items[0].line_total == 750.0
+
+
+def test_extract_items_uses_explicit_line_total_when_present() -> None:
+    parser = TextInvoiceParser()
+
+    items = parser._extract_items("WidgetA 3 $250.00 $900.00")
+
+    assert len(items) == 1
+    assert items[0].line_total == 900.0
+
+
+def test_parse_leaves_missing_headers_as_none(tmp_path: Path) -> None:
+    invoice_path = write_invoice(
+        tmp_path,
+        "\n".join(
+            [
+                "INVOICE",
+                "",
+                "Date: 2026-02-01",
+                "WidgetA qty: 2 unit price: $250.00",
+                "Total Amount: $500.00",
+            ]
+        ),
+    )
+
+    invoice = TextInvoiceParser().parse(invoice_path)
+
+    assert invoice.invoice_number is None
+    assert invoice.vendor_name is None
+    assert invoice.due_date is None
+    assert invoice.payment_terms is None
+    assert invoice.total_amount == 500.0
