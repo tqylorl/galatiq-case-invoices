@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -27,13 +28,30 @@ def seeded_db_path(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def run_invoice(seeded_db_path: Path):
-    def _run_invoice(invoice_name: str):
+    def _run_invoice(invoice_name: str, *, db_path: Path | None = None):
         config = AppConfig(
             invoice_path=INVOICES_DIR / invoice_name,
-            db_path=seeded_db_path,
+            db_path=db_path or seeded_db_path,
             output_format="json",
         )
         processor = InvoiceProcessor(config)
         return processor.process()
 
     return _run_invoice
+
+
+@pytest.fixture
+def set_inventory_stock(seeded_db_path: Path):
+    def _set_inventory_stock(item_name: str, stock: int) -> None:
+        connection = sqlite3.connect(seeded_db_path)
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                "INSERT OR REPLACE INTO inventory (item, stock) VALUES (?, ?)",
+                (item_name, stock),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    return _set_inventory_stock
