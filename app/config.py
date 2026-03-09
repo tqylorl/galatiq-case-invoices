@@ -12,3 +12,4 @@ class AppConfig:
     reasoner_backend: str = "rule"
     ollama_model: str = "qwen2.5:7b"
     ollama_base_url: str = "http://localhost:11434"
+    trace: bool = False

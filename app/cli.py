@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
@@ -55,6 +56,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Directory to write JSON processing reports. Batch mode defaults to reports/ if omitted.",
     )
+    parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="Print per-stage execution trace to stderr.",
+    )
     return parser
 
 
@@ -69,6 +75,18 @@ def discover_invoice_files(invoice_dir: Path) -> list[Path]:
 def process_single_invoice(config: AppConfig) -> ProcessingResult:
     processor = InvoiceProcessor(config)
     return processor.process()
+
+
+def emit_trace(result: ProcessingResult) -> None:
+    print(
+        f"[trace] processing_id={result.processing_id} status={result.status} started_at={result.started_at}",
+        file=sys.stderr,
+    )
+    for metric in result.stage_metrics:
+        print(
+            f"[trace] stage={metric.stage} status={metric.status} duration_ms={metric.duration_ms} findings={metric.finding_count}",
+            file=sys.stderr,
+        )
 
 
 def write_single_report(report_dir: Path, invoice_path: Path, result: ProcessingResult) -> Path:
@@ -119,8 +137,11 @@ def main() -> int:
             reasoner_backend=args.reasoner,
             ollama_model=args.ollama_model,
             ollama_base_url=args.ollama_base_url,
+            trace=args.trace,
         )
         result = process_single_invoice(config)
+        if args.trace:
+            emit_trace(result)
         if args.report_dir:
             write_single_report(Path(args.report_dir), invoice_path, result)
 
@@ -143,8 +164,12 @@ def main() -> int:
             reasoner_backend=args.reasoner,
             ollama_model=args.ollama_model,
             ollama_base_url=args.ollama_base_url,
+            trace=args.trace,
         )
-        run_results.append((invoice_path, process_single_invoice(config)))
+        result = process_single_invoice(config)
+        if args.trace:
+            emit_trace(result)
+        run_results.append((invoice_path, result))
 
     report_dir = Path(args.report_dir) if args.report_dir else Path("reports")
     for invoice_path, result in run_results:

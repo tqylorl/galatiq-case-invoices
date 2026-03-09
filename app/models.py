@@ -66,7 +66,26 @@ class PaymentResult:
 
 
 @dataclass(slots=True)
+class StageMetric:
+    stage: str
+    status: str
+    duration_ms: float
+    finding_count: int = 0
+
+
+@dataclass(slots=True)
+class ProcessingEvent:
+    timestamp: str
+    stage: str
+    event: str
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class ProcessingResult:
+    processing_id: str
+    started_at: str
+    completed_at: str
     status: str
     summary: str
     invoice: Invoice
@@ -74,3 +93,5 @@ class ProcessingResult:
     validation: ValidationResult
     approval: ApprovalResult
     payment: PaymentResult | None = None
+    stage_metrics: list[StageMetric] = field(default_factory=list)
+    events: list[ProcessingEvent] = field(default_factory=list)
