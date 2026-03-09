@@ -10,6 +10,9 @@ dev = ["pytest>=8.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "ollama_live: exercises the local Ollama server with live adversarial prompts",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
