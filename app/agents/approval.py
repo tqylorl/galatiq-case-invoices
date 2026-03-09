@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 from app.models import ApprovalResult, Finding, Invoice, ValidationResult
+from app.reasoning.base import ApprovalDecisionContext, CritiqueContext, Reasoner
+from app.reasoning.rule_based import RuleBasedReasoner
 
 
 class ApprovalAgent:
     scrutiny_threshold = 10_000
 
+    def __init__(self, reasoner: Reasoner | None = None) -> None:
+        self.reasoner = reasoner or RuleBasedReasoner()
+
     def run(self, invoice: Invoice, validation: ValidationResult) -> ApprovalResult:
         approval_findings: list[Finding] = []
-        critique = self._critique(validation)
-        if critique is not None:
-            approval_findings.append(critique)
-
         blocking_findings = [finding for finding in validation.findings if finding.severity == "error"]
         fraud_findings = [finding for finding in validation.findings if finding.severity == "fraud_risk"]
+        critique = self._critique(invoice, validation, blocking_findings, fraud_findings)
+        if critique is not None:
+            approval_findings.append(critique)
 
         if fraud_findings:
             approval_findings.append(
@@ -24,12 +28,18 @@ class ApprovalAgent:
                     {"validation_codes": [finding.code for finding in fraud_findings]},
                 )
             )
+            rationale = self.reasoner.build_rationale(
+                ApprovalDecisionContext(
+                    invoice=invoice,
+                    validation=validation,
+                    decision="rejected",
+                    decision_reason="fraud_risk",
+                    decisive_findings=fraud_findings,
+                )
+            )
             return ApprovalResult(
                 status="rejected",
-                rationale=self._build_rationale(
-                    "Rejected due to fraud risk indicators",
-                    fraud_findings,
-                ),
+                rationale=rationale,
                 findings=approval_findings,
             )
 
@@ -42,12 +52,18 @@ class ApprovalAgent:
                     {"validation_codes": [finding.code for finding in blocking_findings]},
                 )
             )
+            rationale = self.reasoner.build_rationale(
+                ApprovalDecisionContext(
+                    invoice=invoice,
+                    validation=validation,
+                    decision="rejected",
+                    decision_reason="validation_errors",
+                    decisive_findings=blocking_findings,
+                )
+            )
             return ApprovalResult(
                 status="rejected",
-                rationale=self._build_rationale(
-                    "Rejected due to blocking validation errors",
-                    blocking_findings,
-                ),
+                rationale=rationale,
                 findings=approval_findings,
             )
 
@@ -60,54 +76,57 @@ class ApprovalAgent:
                     {"threshold": self.scrutiny_threshold, "total_amount": invoice.total_amount},
                 )
             )
+            rationale = self.reasoner.build_rationale(
+                ApprovalDecisionContext(
+                    invoice=invoice,
+                    validation=validation,
+                    decision="pending_review",
+                    decision_reason="scrutiny_threshold",
+                    decisive_findings=approval_findings[-1:],
+                )
+            )
             return ApprovalResult(
                 status="pending_review",
-                rationale=(
-                    f"Invoice requires additional review because total amount "
-                    f"{invoice.total_amount:.2f} exceeds the {self.scrutiny_threshold:.2f} threshold."
-                ),
+                rationale=rationale,
                 findings=approval_findings,
             )
 
+        rationale = self.reasoner.build_rationale(
+            ApprovalDecisionContext(
+                invoice=invoice,
+                validation=validation,
+                decision="approved",
+                decision_reason="clear",
+                decisive_findings=[],
+            )
+        )
         return ApprovalResult(
             status="approved",
-            rationale="Invoice passed validation and approval rules with no blocking issues.",
+            rationale=rationale,
             findings=approval_findings,
         )
 
-    def _critique(self, validation: ValidationResult) -> Finding | None:
-        blocking_findings = [finding for finding in validation.findings if finding.severity == "error"]
-        fraud_findings = [finding for finding in validation.findings if finding.severity == "fraud_risk"]
+    def _critique(
+        self,
+        invoice: Invoice,
+        validation: ValidationResult,
+        blocking_findings: list[Finding],
+        fraud_findings: list[Finding],
+    ) -> Finding | None:
+        if not blocking_findings and not fraud_findings:
+            return None
 
-        if blocking_findings and fraud_findings:
-            return Finding(
-                "info",
-                "approval_critique",
-                "Critique confirmed the invoice has both blocking errors and fraud indicators; fraud rationale should take precedence.",
-                {
-                    "blocking_error_codes": [finding.code for finding in blocking_findings],
-                    "fraud_codes": [finding.code for finding in fraud_findings],
-                },
+        summary = self.reasoner.build_critique(
+            CritiqueContext(
+                invoice=invoice,
+                validation=validation,
+                blocking_findings=blocking_findings,
+                fraud_findings=fraud_findings,
             )
-
+        )
+        context: dict[str, list[str]] = {}
         if blocking_findings:
-            return Finding(
-                "info",
-                "approval_critique",
-                "Critique confirmed the invoice has blocking validation errors.",
-                {"blocking_error_codes": [finding.code for finding in blocking_findings]},
-            )
-
+            context["blocking_error_codes"] = [finding.code for finding in blocking_findings]
         if fraud_findings:
-            return Finding(
-                "info",
-                "approval_critique",
-                "Critique confirmed the invoice has fraud risk indicators.",
-                {"fraud_codes": [finding.code for finding in fraud_findings]},
-            )
-
-        return None
-
-    def _build_rationale(self, prefix: str, findings: list[Finding]) -> str:
-        codes = ", ".join(finding.code for finding in findings)
-        return f"{prefix}: {codes}."
+            context["fraud_codes"] = [finding.code for finding in fraud_findings]
+        return Finding("info", "approval_critique", summary, context)

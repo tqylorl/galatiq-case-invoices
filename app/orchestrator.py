@@ -6,6 +6,7 @@ from app.agents.payment import PaymentAgent
 from app.agents.validation import ValidationAgent
 from app.config import AppConfig
 from app.models import PaymentResult, ProcessingResult
+from app.reasoning import build_reasoner
 
 
 class InvoiceProcessor:
@@ -13,7 +14,7 @@ class InvoiceProcessor:
         self.config = config
         self.ingestion_agent = IngestionAgent()
         self.validation_agent = ValidationAgent(config.db_path)
-        self.approval_agent = ApprovalAgent()
+        self.approval_agent = ApprovalAgent(build_reasoner(config))
         self.payment_agent = PaymentAgent()
 
     def process(self) -> ProcessingResult:

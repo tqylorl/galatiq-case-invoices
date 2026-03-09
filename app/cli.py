@@ -29,6 +29,22 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Create the inventory database with seed data before processing.",
     )
+    parser.add_argument(
+        "--reasoner",
+        choices=("rule", "ollama"),
+        default="rule",
+        help="Reasoning backend for approval rationale and critique.",
+    )
+    parser.add_argument(
+        "--ollama-model",
+        default="qwen2.5:7b",
+        help="Ollama model name to use when --reasoner=ollama.",
+    )
+    parser.add_argument(
+        "--ollama-base-url",
+        default="http://localhost:11434",
+        help="Base URL for the local Ollama server.",
+    )
     return parser
 
 
@@ -38,6 +54,9 @@ def main() -> int:
         invoice_path=Path(args.invoice_path),
         db_path=Path(args.db_path),
         output_format=args.output,
+        reasoner_backend=args.reasoner,
+        ollama_model=args.ollama_model,
+        ollama_base_url=args.ollama_base_url,
     )
 
     if args.bootstrap_db:
