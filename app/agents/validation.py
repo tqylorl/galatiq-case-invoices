@@ -5,6 +5,8 @@ from pathlib import Path
 
 from app.db import get_inventory_stock
 from app.models import Finding, Invoice, ValidationResult
+from app.reasoning.base import NoteRiskContext, Reasoner
+from app.reasoning.rule_based import RuleBasedReasoner
 
 
 class ValidationAgent:
@@ -22,8 +24,9 @@ class ValidationAgent:
         "avoid penalties",
     )
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, reasoner: Reasoner | None = None) -> None:
         self.db_path = db_path
+        self.reasoner = reasoner or RuleBasedReasoner()
 
     def run(self, invoice: Invoice) -> ValidationResult:
         findings: list[Finding] = []
@@ -163,17 +166,30 @@ class ValidationAgent:
 
         raw_text = invoice.raw_text.lower()
         matched_tokens = [token for token in self.URGENT_LANGUAGE_TOKENS if token in raw_text]
-        if not matched_tokens:
-            return []
-
-        return [
-            Finding(
-                "fraud_risk",
-                "urgent_payment_language",
-                "Invoice contains urgent payment or wire transfer language.",
-                {"matched_terms": matched_tokens},
+        findings: list[Finding] = []
+        if matched_tokens:
+            findings.append(
+                Finding(
+                    "fraud_risk",
+                    "urgent_payment_language",
+                    "Invoice contains urgent payment or wire transfer language.",
+                    {"matched_terms": matched_tokens},
+                )
             )
-        ]
+
+        note_risk = self.reasoner.classify_note_risk(
+            NoteRiskContext(invoice=invoice, heuristic_tokens=matched_tokens)
+        )
+        if note_risk:
+            findings.append(
+                Finding(
+                    "fraud_risk",
+                    "llm_note_risk",
+                    note_risk,
+                    {"matched_terms": matched_tokens},
+                )
+            )
+        return findings
 
     def _compute_subtotal(self, invoice: Invoice) -> float | None:
         subtotal = 0.0

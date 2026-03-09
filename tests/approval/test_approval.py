@@ -24,6 +24,7 @@ def test_approval_rejects_fraud_risk_with_specific_rationale() -> None:
     assert "urgent_payment_language" in result.rationale
     assert any(finding.code == "approval_critique" for finding in result.findings)
     assert any(finding.code == "rejected_for_fraud_risk" for finding in result.findings)
+    assert any(finding.code == "llm_rejection_summary" for finding in result.findings)
 
 
 def test_approval_rejects_blocking_errors_when_no_fraud_exists() -> None:
@@ -38,6 +39,7 @@ def test_approval_rejects_blocking_errors_when_no_fraud_exists() -> None:
     assert "blocking validation errors" in result.rationale.lower()
     assert "unknown_item" in result.rationale
     assert any(finding.code == "rejected_for_validation_errors" for finding in result.findings)
+    assert any(finding.code == "llm_rejection_summary" for finding in result.findings)
 
 
 def test_approval_marks_high_value_invoice_pending_review() -> None:
@@ -58,3 +60,16 @@ def test_approval_approves_clean_invoice() -> None:
     assert result.status == "approved"
     assert "no blocking issues" in result.rationale.lower()
     assert result.findings == []
+
+
+def test_approval_triages_borderline_warning_case_to_pending_review() -> None:
+    validation = ValidationResult(
+        findings=[Finding("warning", "invalid_due_date_format", "Bad format")],
+        is_blocked=False,
+    )
+
+    result = ApprovalAgent().run(make_invoice(total_amount=8500.0), validation)
+
+    assert result.status == "pending_review"
+    assert any(finding.code == "borderline_requires_review" for finding in result.findings)
+    assert any(finding.code == "llm_exception_summary" for finding in result.findings)

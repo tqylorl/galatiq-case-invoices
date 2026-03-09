@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from app.models import ApprovalResult, Finding, Invoice, ValidationResult
-from app.reasoning.base import ApprovalDecisionContext, CritiqueContext, Reasoner
+from app.reasoning.base import (
+    ApprovalDecisionContext,
+    BorderlineTriageContext,
+    CritiqueContext,
+    ExceptionSummaryContext,
+    Reasoner,
+    RejectionSummaryContext,
+)
 from app.reasoning.rule_based import RuleBasedReasoner
 
 
@@ -37,6 +44,7 @@ class ApprovalAgent:
                     decisive_findings=fraud_findings,
                 )
             )
+            approval_findings.append(self._build_rejection_summary(invoice, validation, approval_findings))
             return ApprovalResult(
                 status="rejected",
                 rationale=rationale,
@@ -61,6 +69,7 @@ class ApprovalAgent:
                     decisive_findings=blocking_findings,
                 )
             )
+            approval_findings.append(self._build_rejection_summary(invoice, validation, approval_findings))
             return ApprovalResult(
                 status="rejected",
                 rationale=rationale,
@@ -82,6 +91,40 @@ class ApprovalAgent:
                     validation=validation,
                     decision="pending_review",
                     decision_reason="scrutiny_threshold",
+                    decisive_findings=approval_findings[-1:],
+                )
+            )
+            exception_summary = self._build_exception_summary(invoice, validation)
+            if exception_summary is not None:
+                approval_findings.append(exception_summary)
+            return ApprovalResult(
+                status="pending_review",
+                rationale=rationale,
+                findings=approval_findings,
+            )
+
+        if self.reasoner.triage_borderline(
+            BorderlineTriageContext(
+                invoice=invoice,
+                validation_findings=validation.findings,
+            )
+        ):
+            approval_findings.append(
+                Finding(
+                    "warning",
+                    "borderline_requires_review",
+                    "Borderline case triaged to manual review.",
+                )
+            )
+            exception_summary = self._build_exception_summary(invoice, validation)
+            if exception_summary is not None:
+                approval_findings.append(exception_summary)
+            rationale = self.reasoner.build_rationale(
+                ApprovalDecisionContext(
+                    invoice=invoice,
+                    validation=validation,
+                    decision="pending_review",
+                    decision_reason="borderline_triage",
                     decisive_findings=approval_findings[-1:],
                 )
             )
@@ -130,3 +173,33 @@ class ApprovalAgent:
         if fraud_findings:
             context["fraud_codes"] = [finding.code for finding in fraud_findings]
         return Finding("info", "approval_critique", summary, context)
+
+    def _build_rejection_summary(
+        self,
+        invoice: Invoice,
+        validation: ValidationResult,
+        approval_findings: list[Finding],
+    ) -> Finding:
+        summary = self.reasoner.summarize_rejection(
+            RejectionSummaryContext(
+                invoice=invoice,
+                validation_findings=validation.findings,
+                approval_findings=approval_findings,
+            )
+        )
+        return Finding("info", "llm_rejection_summary", summary)
+
+    def _build_exception_summary(
+        self,
+        invoice: Invoice,
+        validation: ValidationResult,
+    ) -> Finding | None:
+        summary = self.reasoner.summarize_exceptions(
+            ExceptionSummaryContext(
+                invoice=invoice,
+                validation_findings=validation.findings,
+            )
+        )
+        if not summary:
+            return None
+        return Finding("info", "llm_exception_summary", summary)

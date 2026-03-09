@@ -12,9 +12,10 @@ from app.reasoning import build_reasoner
 class InvoiceProcessor:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
-        self.ingestion_agent = IngestionAgent()
-        self.validation_agent = ValidationAgent(config.db_path)
-        self.approval_agent = ApprovalAgent(build_reasoner(config))
+        self.reasoner = build_reasoner(config)
+        self.ingestion_agent = IngestionAgent(self.reasoner)
+        self.validation_agent = ValidationAgent(config.db_path, self.reasoner)
+        self.approval_agent = ApprovalAgent(self.reasoner)
         self.payment_agent = PaymentAgent()
 
     def process(self) -> ProcessingResult:

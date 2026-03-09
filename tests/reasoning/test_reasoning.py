@@ -9,7 +9,12 @@ import pytest
 
 from app.agents.approval import ApprovalAgent
 from app.models import Finding, Invoice, ValidationResult
-from app.reasoning.base import ApprovalDecisionContext, CritiqueContext
+from app.reasoning.base import (
+    ApprovalDecisionContext,
+    BorderlineTriageContext,
+    CritiqueContext,
+    IngestionAmbiguityContext,
+)
 from app.reasoning.ollama import OllamaReasoner
 from app.reasoning.rule_based import RuleBasedReasoner
 
@@ -55,6 +60,16 @@ def test_rule_based_reasoner_builds_pending_review_rationale() -> None:
     assert "exceeds the 10000.00 threshold" in rationale
 
 
+def test_rule_based_reasoner_borderline_triage_for_warning() -> None:
+    reasoner = RuleBasedReasoner()
+    context = BorderlineTriageContext(
+        invoice=make_invoice(total_amount=9000.0),
+        validation_findings=[Finding("warning", "invalid_due_date_format", "Bad date")],
+    )
+
+    assert reasoner.triage_borderline(context) is True
+
+
 def test_ollama_reasoner_uses_remote_response(monkeypatch) -> None:
     def fake_urlopen(req, timeout=20):
         return FakeResponse({"response": "LLM rationale"})
@@ -97,6 +112,39 @@ def test_ollama_reasoner_falls_back_when_request_fails(monkeypatch) -> None:
     assert "blocking validation errors" in rationale.lower()
 
 
+def test_ollama_reasoner_resolve_ambiguous_invoice_returns_json_fields(monkeypatch) -> None:
+    def fake_urlopen(req, timeout=20):
+        return FakeResponse({"response": '{"vendor_name": "QuickShip Distributors", "due_date": "2026-02-25"}'})
+
+    monkeypatch.setattr("app.reasoning.ollama.request.urlopen", fake_urlopen)
+    reasoner = OllamaReasoner("qwen2.5:7b", "http://localhost:11434")
+
+    resolved = reasoner.resolve_ambiguous_invoice(
+        IngestionAmbiguityContext(
+            invoice=Invoice(raw_text="FROM QuickShip ... DUE 2026-02-25")
+        )
+    )
+
+    assert resolved["vendor_name"] == "QuickShip Distributors"
+    assert resolved["due_date"] == "2026-02-25"
+
+
+def test_ollama_reasoner_falls_back_on_invalid_json_for_ambiguity(monkeypatch) -> None:
+    def fake_urlopen(req, timeout=20):
+        return FakeResponse({"response": "not json"})
+
+    monkeypatch.setattr("app.reasoning.ollama.request.urlopen", fake_urlopen)
+    reasoner = OllamaReasoner("qwen2.5:7b", "http://localhost:11434")
+
+    resolved = reasoner.resolve_ambiguous_invoice(
+        IngestionAmbiguityContext(
+            invoice=Invoice(raw_text="broken")
+        )
+    )
+
+    assert resolved == {}
+
+
 def test_approval_agent_uses_reasoner_for_rationale_and_critique() -> None:
     class StubReasoner:
         def build_rationale(self, context):
@@ -104,6 +152,21 @@ def test_approval_agent_uses_reasoner_for_rationale_and_critique() -> None:
 
         def build_critique(self, context):
             return "stub critique"
+
+        def resolve_ambiguous_invoice(self, context):
+            return {}
+
+        def classify_note_risk(self, context):
+            return None
+
+        def summarize_rejection(self, context):
+            return "stub rejection summary"
+
+        def summarize_exceptions(self, context):
+            return "stub exception summary"
+
+        def triage_borderline(self, context):
+            return False
 
     agent = ApprovalAgent(StubReasoner())
     validation = ValidationResult(
@@ -115,6 +178,7 @@ def test_approval_agent_uses_reasoner_for_rationale_and_critique() -> None:
 
     assert result.rationale == "stub rationale for rejected"
     assert any(finding.message == "stub critique" for finding in result.findings)
+    assert any(finding.code == "llm_rejection_summary" for finding in result.findings)
 
 
 @pytest.mark.ollama_live
